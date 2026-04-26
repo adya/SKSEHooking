@@ -114,12 +114,6 @@ namespace stl
 				Hook::func = func;
 			}
 		}
-
-		inline std::size_t requested_bytes = 0;
-
-		void request_bytes(size_t bytes) {
-			requested_bytes += bytes;
-		}
 	}
 
 	// Right now we only use write_call<5>, so not much to worry about. The info below is just for reference.
@@ -132,7 +126,6 @@ namespace stl
 	template <hook Hook>
 	void write_call(std::uintptr_t a_src) {
 		auto& trampoline = SKSE::GetTrampoline();
-		details::requested_bytes += 14;
 		
 		if constexpr (proxy_hook<Hook>) {
 			details::set_func<Hook>(trampoline.write_call<5>(a_src, Hook::Proxy::thunk));
@@ -200,28 +193,6 @@ namespace stl
 				stl::report_and_fail("Invalid hook location, write_thunk can only be used for call or lea instructions"sv);
 			}
 		}
-	}
-
-	/// <summary>
-	/// Allocates trampoline memory and performs install function.
-	/// After installation checks if enough trampoline memory was allocated and reports if not.
-	/// 
-	/// Alternative, one can use trace log level for SKSE, to read number of values in the log.
-	/// 
-	/// Generally, only call_hook require trampoline memory. 14 bytes per one call_hook.
-	/// Allocating 14*N bytes should be enough for N hooks.
-	/// </summary>
-	/// <typeparam name="Installation">An empty function</typeparam>
-	/// <param name="bytes">Memory size in bytes to allocate for trampoline</param>
-	/// <param name="install">A lambda that should perform all install_hook calls.</param>
-	template<typename Installation>
-	void on_trampoline(size_t bytes, const Installation& install) {
-		SKSE::AllocTrampoline(bytes);
-		install();
-		if (bytes < details::requested_bytes) {
-			stl::report_and_fail(std::format("Not enough trampoline memory allocated. Requested: {}, Allocated: {}. Consider increasing the allocated trampoline size.", details::requested_bytes, bytes));
-		}
-		details::requested_bytes = 0;
 	}
 
 	/// Installs given hook.
