@@ -55,12 +55,7 @@ concept proxy_hook = requires {
 /// This also supports writing to lea instructions, which store function addresses.
 template <typename Hook>
 concept call_hook = hook<Hook> && requires {
-	{
-		Hook::relocation
-	} -> std::convertible_to<REL::ID>;
-	{
-		Hook::offset
-	} -> std::convertible_to<std::size_t>;
+	requires std::constructible_from<REL::Relocation<std::uintptr_t>, decltype(Hook::relocation), decltype(Hook::offset)>;
 };
 
 /// A type that has a vtable to hook into.
