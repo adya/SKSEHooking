@@ -2,6 +2,9 @@
 
 #include "SKSE/SKSE.h"
 
+#include <algorithm>
+#include <ranges>
+
 #define ByteAt(addr) *reinterpret_cast<std::uint8_t*>(addr)
 
 /// Declraing a pre_hook function allows Hook to receive a call before the main hook will be installed.
@@ -86,6 +89,41 @@ concept custom_vtable_index = requires {
 	} -> std::convertible_to<std::size_t>;
 };
 
+/// Declaring min_version restricts a hook to runtimes at or above the given REL::Version.
+/// static inline constexpr REL::Version min_version{ SKSE::RUNTIME_SSE_1_6_640 };
+template <typename Hook>
+concept min_versioned_hook = requires {
+	{
+		Hook::min_version
+	} -> std::convertible_to<REL::Version>;
+};
+
+/// Declaring max_version restricts a hook to runtimes at or below the given REL::Version.
+/// static inline constexpr REL::Version max_version{ SKSE::RUNTIME_SSE_1_6_1130 };
+template <typename Hook>
+concept max_versioned_hook = requires {
+	{
+		Hook::max_version
+	} -> std::convertible_to<REL::Version>;
+};
+
+/// Declaring exact_versions restricts a hook to only the listed runtimes.
+/// Can be any range of REL::Version (e.g. std::array), so it composes with min_version/max_version if both are present.
+/// static inline constexpr std::array exact_versions{ SKSE::RUNTIME_SSE_1_6_640, SKSE::RUNTIME_SSE_1_6_1170 };
+template <typename Hook>
+concept exact_versioned_hook = requires {
+	{
+		Hook::exact_versions
+	} -> std::ranges::range;
+	requires std::convertible_to<std::ranges::range_value_t<decltype(Hook::exact_versions)>, REL::Version>;
+};
+
+/// A hook that only installs on runtimes matching its declared version constraints.
+/// Combine any subset of min_version, max_version and exact_versions; all declared constraints must be satisfied.
+/// install_hook silently skips a hook whose constraints aren't met by the running game version.
+template <typename Hook>
+concept versioned_hook = min_versioned_hook<Hook> || max_versioned_hook<Hook> || exact_versioned_hook<Hook>;
+
 namespace stl
 {
 	using namespace SKSE::stl;
@@ -108,6 +146,29 @@ namespace stl
 			if constexpr (chain_hook<Hook>) {
 				Hook::func = func;
 			}
+		}
+
+		template <versioned_hook Hook>
+		bool is_version_supported() {
+			const auto version = REL::Module::get().version();
+
+			if constexpr (min_versioned_hook<Hook>) {
+				if (version < Hook::min_version) {
+					return false;
+				}
+			}
+			if constexpr (max_versioned_hook<Hook>) {
+				if (version > Hook::max_version) {
+					return false;
+				}
+			}
+			if constexpr (exact_versioned_hook<Hook>) {
+				if (std::ranges::find(Hook::exact_versions, version) == std::ranges::end(Hook::exact_versions)) {
+					return false;
+				}
+			}
+
+			return true;
 		}
 	}
 
@@ -201,6 +262,12 @@ namespace stl
 			} else {
 				using ThunkType = decltype(Hook::thunk);
 				static_assert(std::is_same_v<REL::Relocation<ThunkType>, FuncType>, "Mismatching type of thunk and func. 'Use static inline REL::Relocation<decltype(thunk)> func;' to always match the type.");
+			}
+		}
+
+		if constexpr (versioned_hook<Hook>) {
+			if (!details::is_version_supported<Hook>()) {
+				return;
 			}
 		}
 
