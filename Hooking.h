@@ -120,20 +120,34 @@ concept exact_versioned_hook = requires {
 
 /// A hook that only installs on runtimes matching its declared version constraints.
 /// Combine any subset of min_version, max_version and exact_versions; all declared constraints must be satisfied.
-/// install_hook silently skips a hook whose constraints aren't met by the running game version.
 template <typename Hook>
 concept versioned_hook = min_versioned_hook<Hook> || max_versioned_hook<Hook> || exact_versioned_hook<Hook>;
+
+/// Declaring runtime restricts a hook to a single REL::Module::Runtime (SE, AE or VR).
+/// static inline constexpr REL::Module::Runtime runtime{ REL::Module::Runtime::AE };
+template <typename Hook>
+concept runtime_hook = requires {
+	{
+		Hook::runtime
+	} -> std::convertible_to<REL::Module::Runtime>;
+};
+
+/// A hook that only installs when its declared constraints are met by the running game.
+/// Combine any subset of min_version, max_version, exact_versions and runtime; all declared constraints must be satisfied.
+/// install_hook silently skips a hook whose constraints aren't met.
+template <typename Hook>
+concept conditional_hook = versioned_hook<Hook> || runtime_hook<Hook>;
 
 namespace stl
 {
 	using namespace SKSE::stl;
 
-	
 	namespace details
 	{
 		// Optional properties of a hook.
 		template <vtable_hook Hook>
-		constexpr std::size_t get_vtable() {
+		constexpr std::size_t get_vtable()
+		{
 			if constexpr (custom_vtable_index<Hook>) {
 				return Hook::vtable;  // Use the vtable if it exists
 			} else {
@@ -142,29 +156,39 @@ namespace stl
 		}
 
 		template <typename Hook>
-		constexpr void set_func(std::uintptr_t func) {
+		constexpr void set_func(std::uintptr_t func)
+		{
 			if constexpr (chain_hook<Hook>) {
 				Hook::func = func;
 			}
 		}
 
-		template <versioned_hook Hook>
-		bool is_version_supported() {
-			const auto version = REL::Module::get().version();
+		template <conditional_hook Hook>
+		bool is_hook_enabled()
+		{
+			if constexpr (runtime_hook<Hook>) {
+				if (REL::Module::GetRuntime() != Hook::runtime) {
+					return false;
+				}
+			}
 
-			if constexpr (min_versioned_hook<Hook>) {
-				if (version < Hook::min_version) {
-					return false;
+			if constexpr (versioned_hook<Hook>) {
+				const auto version = REL::Module::get().version();
+
+				if constexpr (min_versioned_hook<Hook>) {
+					if (version < Hook::min_version) {
+						return false;
+					}
 				}
-			}
-			if constexpr (max_versioned_hook<Hook>) {
-				if (version > Hook::max_version) {
-					return false;
+				if constexpr (max_versioned_hook<Hook>) {
+					if (version > Hook::max_version) {
+						return false;
+					}
 				}
-			}
-			if constexpr (exact_versioned_hook<Hook>) {
-				if (std::ranges::find(Hook::exact_versions, version) == std::ranges::end(Hook::exact_versions)) {
-					return false;
+				if constexpr (exact_versioned_hook<Hook>) {
+					if (std::ranges::find(Hook::exact_versions, version) == std::ranges::end(Hook::exact_versions)) {
+						return false;
+					}
 				}
 			}
 
@@ -180,9 +204,10 @@ namespace stl
 	// <6> just allocates a 8 bytes(64 - bit value) that holds the address that'll go to<SkyirmSE.exe->[Trampoline Memory] -> AmazingPlugin.dll>
 
 	template <hook Hook>
-	void write_call(std::uintptr_t a_src) {
+	void write_call(std::uintptr_t a_src)
+	{
 		auto& trampoline = SKSE::GetTrampoline();
-		
+
 		if constexpr (proxy_hook<Hook>) {
 			details::set_func<Hook>(trampoline.write_call<5>(a_src, Hook::Proxy::thunk));
 		} else {
@@ -191,7 +216,8 @@ namespace stl
 	}
 
 	template <has_vtable F, vtable_hook Hook>
-	void write_vfunc() {
+	void write_vfunc()
+	{
 		REL::Relocation<std::uintptr_t> vtbl{ F::VTABLE[details::get_vtable<Hook>()] };
 		if constexpr (proxy_hook<Hook>) {
 			details::set_func<Hook>(vtbl.write_vfunc(Hook::index, Hook::Proxy::thunk));
@@ -201,12 +227,14 @@ namespace stl
 	}
 
 	template <vtable_hook Hook>
-	void write_vfunc() {
+	void write_vfunc()
+	{
 		write_vfunc<typename Hook::Target, Hook>();
 	}
 
 	template <call_hook Hook>
-	void write_call() {
+	void write_call()
+	{
 		const REL::Relocation<std::uintptr_t> rel{ Hook::relocation, Hook::offset };
 		std::uintptr_t                        sourceAddress = rel.address();
 
@@ -253,7 +281,8 @@ namespace stl
 
 	/// Installs given hook.
 	template <hook Hook>
-	void install_hook() {
+	void install_hook()
+	{
 		if constexpr (chain_hook<Hook>) {
 			using FuncType = decltype(Hook::func);
 			if constexpr (proxy_hook<Hook>) {
@@ -265,8 +294,8 @@ namespace stl
 			}
 		}
 
-		if constexpr (versioned_hook<Hook>) {
-			if (!details::is_version_supported<Hook>()) {
+		if constexpr (conditional_hook<Hook>) {
+			if (!details::is_hook_enabled<Hook>()) {
 				return;
 			}
 		}
