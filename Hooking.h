@@ -1,11 +1,17 @@
 #pragma once
 
+#include "REL/Pattern.h"
 #include "SKSE/SKSE.h"
 
 #include <algorithm>
 #include <ranges>
 
 #define ByteAt(addr) *reinterpret_cast<std::uint8_t*>(addr)
+
+/// Fixed-size compile-time string used to declare a hook's byte signature, e.g.:
+/// static inline constexpr Signature signature{ "48 8B 05 ?? ?? ?? ?? 48 63 C9" };
+template <typename CharT, std::size_t N>
+using Signature = SKSE::stl::nttp::string<CharT, N>;
 
 /// Declraing a pre_hook function allows Hook to receive a call before the main hook will be installed.
 template <typename Hook>
@@ -43,6 +49,17 @@ template <typename Hook>
 concept chain_hook = requires {
 	{
 		Hook::func
+	};
+};
+
+/// Declaring a static constexpr signature (a space-separated hex byte pattern, '??' as a wildcard) has
+/// install_hook verify the bytes at the hook's target address match it before installing, failing loudly
+/// instead of silently mis-hooking when the target address is wrong for the running game version.
+/// static inline constexpr Signature signature{ "48 8B 05 ?? ?? ?? ?? 48 63 C9" };
+template <typename Hook>
+concept signature_hook = requires {
+	{
+		REL::make_pattern<Hook::signature>()
 	};
 };
 
@@ -238,6 +255,10 @@ namespace stl
 		const REL::Relocation<std::uintptr_t> rel{ Hook::relocation, Hook::offset };
 		std::uintptr_t                        sourceAddress = rel.address();
 
+		if constexpr (signature_hook<Hook>) {
+			REL::make_pattern<Hook::signature>().match_or_fail(sourceAddress);
+		}
+
 		auto byteAddress = sourceAddress;
 		auto opcode = ByteAt(byteAddress);
 
@@ -307,6 +328,7 @@ namespace stl
 		if constexpr (call_hook<Hook>) {
 			stl::write_call<Hook>();
 		} else if constexpr (vtable_hook<Hook>) {
+			static_assert(!signature_hook<Hook>, "signature verification is only supported for call_hook.");
 			stl::write_vfunc<Hook>();
 		} else {
 			static_assert(false, "Unsupported hook type. Hook must target either call, lea or vtable");
