@@ -13,6 +13,33 @@
 template <typename CharT, std::size_t N>
 using Signature = SKSE::stl::nttp::string<CharT, N>;
 
+/// A set of fixed-size compile-time strings used to declare a hook's byte signature for multiple runtimes, e.g.:
+/// static inline constexpr VariantSignature<"48 8B 05 ?? ?? ?? ??", "4C 8B 05 ?? ?? ?? ??"> signature;
+template <Signature SE, Signature AE = Signature<char, 0>{ "" }, Signature VR = Signature<char, 0>{ "" }>
+struct VariantSignature
+{
+	static void match_or_fail(std::uintptr_t address)
+	{
+		switch (REL::Module::GetRuntime()) {
+		case REL::Module::Runtime::SE:
+			if constexpr (!SE.empty()) {
+				REL::make_pattern<SE>().match_or_fail(address);
+			}
+			return;
+		case REL::Module::Runtime::AE:
+			if constexpr (!AE.empty()) {
+				REL::make_pattern<AE>().match_or_fail(address);
+			}
+			return;
+		case REL::Module::Runtime::VR:
+			if constexpr (!VR.empty()) {
+				REL::make_pattern<VR>().match_or_fail(address);
+			}
+			return;
+		}
+	}
+};
+
 /// Declraing a pre_hook function allows Hook to receive a call before the main hook will be installed.
 template <typename Hook>
 concept pre_hook = requires {
@@ -52,14 +79,16 @@ concept chain_hook = requires {
 	};
 };
 
-/// Declaring a static constexpr signature (a space-separated hex byte pattern, '??' as a wildcard) has
-/// install_hook verify the bytes at the hook's target address match it before installing, failing loudly
-/// instead of silently mis-hooking when the target address is wrong for the running game version.
-/// static inline constexpr Signature signature{ "48 8B 05 ?? ?? ?? ?? 48 63 C9" };
+/// A hook that can be verified with a signature - space-separated hex byte pattern at installation time.
+/// This confirms that the hook is being installed at the intended address and that the target region of code has not changed.
 template <typename Hook>
 concept signature_hook = requires {
 	{
 		REL::make_pattern<Hook::signature>()
+	};
+} || requires(std::uintptr_t address) {
+	{
+		Hook::signature.match_or_fail(address)
 	};
 };
 
@@ -180,6 +209,16 @@ namespace stl
 			}
 		}
 
+		template <signature_hook Hook>
+		void verify_signature(std::uintptr_t address)
+		{
+			if constexpr (requires { Hook::signature.match_or_fail(address); }) {
+				Hook::signature.match_or_fail(address);
+			} else {
+				REL::make_pattern<Hook::signature>().match_or_fail(address);
+			}
+		}
+
 		template <conditional_hook Hook>
 		bool is_hook_enabled()
 		{
@@ -256,7 +295,7 @@ namespace stl
 		std::uintptr_t                        sourceAddress = rel.address();
 
 		if constexpr (signature_hook<Hook>) {
-			REL::make_pattern<Hook::signature>().match_or_fail(sourceAddress);
+			details::verify_signature<Hook>(sourceAddress);
 		}
 
 		auto byteAddress = sourceAddress;
