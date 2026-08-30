@@ -294,10 +294,6 @@ namespace stl
 		const REL::Relocation<std::uintptr_t> rel{ Hook::relocation, Hook::offset };
 		std::uintptr_t                        sourceAddress = rel.address();
 
-		if constexpr (signature_hook<Hook>) {
-			details::verify_signature<Hook>(sourceAddress);
-		}
-
 		auto byteAddress = sourceAddress;
 		auto opcode = ByteAt(byteAddress);
 
@@ -358,6 +354,11 @@ namespace stl
 			if (!details::is_hook_enabled<Hook>()) {
 				return;
 			}
+		}
+
+		if constexpr (call_hook<Hook> && signature_hook<Hook>) {
+			const REL::Relocation<std::uintptr_t> rel{ Hook::relocation, Hook::offset };
+			details::verify_signature<Hook>(rel.address());
 		}
 
 		if constexpr (pre_hook<Hook>) {
