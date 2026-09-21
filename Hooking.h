@@ -40,6 +40,36 @@ struct VariantSignature
 	}
 };
 
+/// A vtable slot index that differs between runtimes, e.g.:
+/// static inline constexpr VariantIndex index{ 0xB7, 0xB7, 0xB8 };  // SE, AE, VR
+struct VariantIndex
+{
+	constexpr VariantIndex(std::size_t seIndex, std::size_t aeIndex, std::size_t vrIndex) noexcept :
+		_se(seIndex), _ae(aeIndex), _vr(vrIndex) {}
+
+	constexpr VariantIndex(std::size_t seIndex, std::size_t aeIndex) noexcept :
+		VariantIndex(seIndex, aeIndex, seIndex) {}
+
+	[[nodiscard]] std::size_t value() const
+	{
+		switch (REL::Module::GetRuntime()) {
+		case REL::Module::Runtime::SE:
+			return _se;
+		case REL::Module::Runtime::VR:
+			return _vr;
+		default:
+			return _ae;
+		}
+	}
+
+	[[nodiscard]] operator std::size_t() const { return value(); }
+
+private:
+	std::size_t _se;
+	std::size_t _ae;
+	std::size_t _vr;
+};
+
 /// Declraing a pre_hook function allows Hook to receive a call before the main hook will be installed.
 template <typename Hook>
 concept pre_hook = requires {
@@ -117,6 +147,7 @@ concept has_vtable = requires {
 };
 
 /// Defines required fields for a valid vtable hook.
+/// The `index` can be a plain std::size_t or a VariantIndex when the slot differs between runtimes.
 /// Note that providing a custom vtable index is optional, if ommited `0`th table will be used by default.
 template <typename Hook>
 concept vtable_hook = hook<Hook> && requires {
@@ -276,9 +307,9 @@ namespace stl
 	{
 		REL::Relocation<std::uintptr_t> vtbl{ F::VTABLE[details::get_vtable<Hook>()] };
 		if constexpr (proxy_hook<Hook>) {
-			details::set_func<Hook>(vtbl.write_vfunc(Hook::index, Hook::Proxy::thunk));
+			details::set_func<Hook>(vtbl.write_vfunc(static_cast<std::size_t>(Hook::index), Hook::Proxy::thunk));
 		} else {
-			details::set_func<Hook>(vtbl.write_vfunc(Hook::index, Hook::thunk));
+			details::set_func<Hook>(vtbl.write_vfunc(static_cast<std::size_t>(Hook::index), Hook::thunk));
 		}
 	}
 
