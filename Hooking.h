@@ -3,9 +3,6 @@
 #include "REL/Pattern.h"
 #include "SKSE/SKSE.h"
 
-#include <algorithm>
-#include <ranges>
-
 #define ByteAt(addr) *reinterpret_cast<std::uint8_t*>(addr)
 
 /// Fixed-size compile-time string used to declare a hook's byte signature, e.g.:
@@ -200,8 +197,18 @@ concept exact_versioned_hook = requires {
 template <typename Hook>
 concept versioned_hook = min_versioned_hook<Hook> || max_versioned_hook<Hook> || exact_versioned_hook<Hook>;
 
-/// Declaring runtime restricts a hook to a single REL::Module::Runtime (SE, AE or VR).
+namespace REL
+{
+	/// Combines runtimes into a mask, e.g. for a runtime_hook that targets several runtimes.
+	[[nodiscard]] constexpr Module::Runtime operator|(Module::Runtime lhs, Module::Runtime rhs) noexcept
+	{
+		return static_cast<Module::Runtime>(std::to_underlying(lhs) | std::to_underlying(rhs));
+	}
+}
+
+/// Declaring runtime restricts a hook to the given REL::Module::Runtime (SE, AE or VR), or a combination of them.
 /// static inline constexpr REL::Module::Runtime runtime{ REL::Module::Runtime::AE };
+/// static inline constexpr REL::Module::Runtime runtime{ REL::Module::Runtime::SE | REL::Module::Runtime::AE };
 template <typename Hook>
 concept runtime_hook = requires {
 	{
@@ -254,7 +261,7 @@ namespace stl
 		bool is_hook_enabled()
 		{
 			if constexpr (runtime_hook<Hook>) {
-				if (REL::Module::GetRuntime() != Hook::runtime) {
+				if ((std::to_underlying(REL::Module::GetRuntime()) & std::to_underlying(Hook::runtime)) == 0) {
 					return false;
 				}
 			}
